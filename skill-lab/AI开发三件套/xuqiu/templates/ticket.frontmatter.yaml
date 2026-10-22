@@ -1,0 +1,92 @@
+# ⚠️ 复制成 doc/tickets/<id>/prompt.md 时，**必须从下面第一个 `---` 开始复制**。
+#    prompt.md 的第 1 行必须是 `---`，否则所有 lint 都报「缺 front-matter」。
+#    本文件顶部这段说明**不要一起复制进去**。
+#
+# ticket 任务书机器可读头 —— 三件套的接缝（seam）
+# 由 ①xuqiu 产出（每 ticket 一份），②zhixing 消费（这段是调度器的全部输入）。
+# 正文（§0 状态自检 / 实现描述 / §N 完工报告要求）写在这段 front-matter 之下；调度器不读正文。
+# ⚠️ ticket 正文文件**固定命名 prompt.md**（落 doc/tickets/<ticket>/prompt.md）——调度器/dag_lint 只认这个名，
+#    叫别的名 lint 全绿但静默不入波。
+# 占位符 <...> 按项目实际技术栈替换。
+#
+# ── 粒度约定（三层，别混）──────────────────────────────────────────────────
+#   需求点 REQ   甲方文档里的一条            → doc/requirements.yaml
+#   **ticket**   一个功能点 = 本文件一份     → 完工跑 accept（2-3 条轻量断言）
+#   **任务 daily** 多个 ticket 的集合 = phase → 完工跑完整 L0-L3 干净 QA 门
+#   项目         多个任务
+#   完整测试只在**任务**边界做，不在每个 ticket 后做（ticket 只自证关键链路没断）。
+
+---
+ticket: WMS-DEMAND-001          # 全局唯一 id，= 目录名 doc/tickets/<ticket>/
+track: WMS                      # 域轨归属，调度器按轨隔离。示例域：SYS/BRD/PLT/WMS/STR
+phase: D1                       # ★ 归属**任务(daily)**，xuqiu 需求层就分好 D1-Dn。
+                                #   zhixing 按任务串行跑，每个任务末一道干净 QA 门。
+                                #   必填——漏写会静默不入任何任务（dag_lint C7 拦）。
+size: M                         # S/M/L —— 任务装箱参考，非硬约束
+system: store                   # 多系统项目才填（两后端/两库/官网独立栈）。决定 lint 用哪套
+                                #   公共字段集（doc/lint-profile.yaml 的 systems.<name>）。单系统项目省略。
+req_refs:                       # ★ 本 ticket 满足甲方的哪几条需求（doc/requirements.yaml 的 id）。
+  - REQ-WMS-012                 #   必填非空——写不出 = 这个 ticket 没有需求来源（镀金嫌疑）。
+  - REQ-WMS-013                 #   coverage_lint.py 据此双向校验：REQ 无 ticket=漏拆，ticket 无 REQ=镀金。
+depends_on:                     # 硬依赖：列表里全部 done 才可开工。
+  - WMS-MD-002                  #   只写 ticket id；禁写 "D8 merge 后" 这类日期语义（日期语义正是要退役的）
+  - BRD-LIST-001
+touches:                        # 悲观声明：预计涉改的 glob（模块占用锁的判定输入）。
+  - <后端模块>/warehouse/**     #   共享文件（api barrel / 路由表 / i18n 词表 / 公共组件）必须显式列——
+  - <前端>/views/warehouse/demand/**  #   宁可多列。合流时 git diff 与此对账，超出声明即 FAIL（touches 罚则）。
+  - <前端>/api/warehouse/**
+adr_refs:                       # 本 ticket 实施前必读的决策记录（可空）。ADR-NNNN 本身是锚：
+  - ADR-0004                    #   ADR 翻案（frontmatter decision/status 变了）→ authority_lint
+  - ADR-0008                    #   impact 反查到这里，与蓝图翻案同一条传播链。悬空引用 check 报错。
+blueprint_refs:                 # ★ 建在权威蓝图的哪几条上。**必须写稳定锚 id**，不是章节号。
+  - FLOW:F-WMS-03.step4         #   前缀：FLOW:业务流 / FIELD:字段 / UI:页面 / OWN:数据主权
+  - FIELD:t_warehouse_demand.status   #   章节号（`字段表#§5.2`）会漂移：蓝图插一节，所有后面的锚
+  - OWN:t_inv_stock             #   **静默指向别的内容**——还能解析，只是指错，最难发现。
+                                #   authority_lint.py impact 按此反查：权威改了 → 哪些 ticket 要重做。
+                                #   锚粒度尽量细（锚到 step/字段，别锚整个流程），否则改一处会大面积误伤。
+ui:
+  required: true                # 本示例 touches 包含 views；无 UI 影响的票按实际填 false
+accept:                         # 机器可验断言 2-3 条，shell 退出码 0 = 过。
+  - name: 表已建且含公共字段     #   写不出 accept = 任务书未就绪，不进队列。
+    form: DDL                   #   form 决定强制形态，见 accept-assertion-forms.md（防弱断言批发）。
+    run: <断言命令>             #   ⚠️ run 的**内容**会被 dag_lint C5 做形态提示（先剥注释再判）。
+                                #      C5 是**启发式 warning 不是保证**——真正的强度检验是变异测试。
+                                #      唯一硬拦：run 为空、DATA 里自造数据自证（INSERT/mock）。
+    counterfeit: 把 create_dept 从 DDL 里删掉 —— 这条会红
+                                # ★ 一句话：**把实现改成什么样，这条会红？** 写不出就是装饰品，
+                                #   当场重写别放进队列。这是最省钱的一条规矩——
+                                #   T006 的 39 条 accept 有 35 条「实现坏了照样绿」，
+                                #   在这里发现改一行 yaml，等到 QA 门发现是整轮返工。
+                                #   八种见过的假绿形态见 accept-assertion-forms.md。
+  - name: API 可达且返回结构正确
+    form: API
+    run: <断言命令>
+  - name: 菜单落段且 path 非空可达
+    form: MENU
+    run: <断言命令>
+  - name: 跨表对账守恒（账动累计=实存快照）   # DATA=B类(跨层契约/数据一致性,占返工~32%)唯一强制形态；
+    form: DATA                                #   断在实现方没写过的真实 seed 数据上，禁自造数据自证
+    run: <对账断言命令>
+  - name: 非法状态转移被拒 + 关键路径全链可达  # STATE=状态机类(非法转移必须被拒，不能只断终态存在)
+    form: STATE
+    run: <状态机断言命令>
+# ↑ 六种 form（含 E2E）与 accept-assertion-forms.md 一一对齐。真实 ticket 按需选 2-3 条，
+#   但 DATA/STATE 是最难自动拦的两类事故的抓手，命中就必须用对应 form（别退化成 API code==200）。
+  - name: 从真实入口执行主动作并验证业务结果
+    form: E2E
+    entry: <用户实际入口>
+    action: <本票核心操作>
+    outcome: <请求与刷新后可见的结果>
+    run: <实际UI runner命令>
+    result: doc/waves/evidence/ui/<ticket>.json
+    counterfeit: 点击事件不发请求或请求顺序错误，这条必须失败
+# 有 UI 影响的票至少一条 E2E；结构与结果格式见 e2e-accept.md。
+
+---
+
+# ── 校验命令（拆完 ticket 必跑这几条，全绿才交 ②zhixing）─────────────────────
+#   cd <ws>                                                       # 多阶段项目进 doc-phase2/
+#   python3 ~/.claude/skills/xuqiu/scripts/coverage_lint.py --write-back     # 路径自动探测，别手传
+#   python3 ~/.claude/skills/xuqiu/scripts/authority_lint.py check
+#   python3 ~/.claude/skills/zhixing/scripts/dag_lint.py
+# （这是 skill 实体路径，Claude Code 与 其他 agent 环境 通用；见 xuqiu/SKILL.md §0.0）

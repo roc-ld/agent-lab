@@ -1,0 +1,34 @@
+# RuoYi-Vue-Plus 栈包 profile —— 机器可读常量（dag_lint 等脚本按 stack 键解析到这里）
+# 值的分工：**范式是栈的，具体值是项目的**（menu_id 段位等在项目 PROJECT.md/lint-profile 定）。
+stack: ruoyi-vue-plus
+n_projects: 2                      # 两个实战项目（N=2 触发本包蒸馏，2026-08-17）
+
+# DDL accept 断言的公共字段全集（dag_lint C5 消费）。
+# 基础 6 字段是框架的；tenant_id/del_unique 是 一个实战项目实践加的（软删后同键可重建）——
+# 项目在 doc/lint-profile.yaml 里选用哪套或再扩。
+public_fields: [create_by, create_time, update_by, update_time, create_dept, del_flag]
+public_fields_extended: [create_by, create_time, update_by, update_time, create_dept,
+                         del_flag, tenant_id, del_unique]
+
+migration:
+  tool: flyway
+  naming: "V<yyyyMMddHHmm>__<描述>.sql"
+  rules:
+    - "HHmm 当模块段（ADR-0008 范式）——并行 ticket 各占时间戳段，合流不改文件名"
+    - "版本号取比现存最大更大，别用本机时间（会撞已应用的未来戳）"
+    - "已应用的迁移终身不改名不改内容（checksum 血案）"
+
+menu:
+  rule: "每项目从一个千位段起、按域切段（例：5000-9999 分五域，或 5000-5999 单域）；具体值权威在项目 PROJECT.md"
+  accept: "MENU form 必断 path 非空 + getRouters 可下发（空 path 崩整个路由是真实事故）"
+
+conventions:
+  base_service: "业务 service 走项目业务基类（软删 + 公共校验；抽取时机与命名见 ADR-0005 范式）"
+  dict_seed: "字典命名/DDL 对齐/复用优先见 ADR-0004 范式；新建前先查可复用"
+  applet_path: "小程序 controller 路径命名见 ADR-0009 范式"
+  auth: "登录必须带 clientId + grantType（缺 clientId → token 空 → API 断言静默红，gotchas §14.2）"
+
+files:
+  gotchas: gotchas.md              # 坑手册（唯一权威；项目里只留指针 + <stack>-local.md 回流）
+  verify_lib: verify-lib.sh        # accept/verify.sh 的函数库（db/api/json/login）
+  renderer: renderer.py            # ssot_gen render_ddl 的即贴实现（MySQL/Flyway 方言）

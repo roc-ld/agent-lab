@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# =============================================================================
+# L1 回归包原子 —— verify.sh 模板（stack-agnostic 骨架，按栈实例化）
+# =============================================================================
+# 一个 ticket 一份 regression/<域>/<TICKET-ID>.verify.sh，由 ①xuqiu
+# 的 accept 断言落成可执行脚本；②zhixing 收敛时跑一次、波末合流时全量重放。
+#
+# 契约（每条铁律，违反即返工）：
+#   1. 幂等：脚本可任意重跑，退出码稳定。不写库、不改状态、不留副作用；
+#      只读断言。SELECT/GET，不 INSERT/POST。跑第 2 次结果必须和第 1 次一致。
+#   2. 断言打在实现方没写过的真实 seed 数据上（禁自造数据自证）：
+#      数据只来自白名单 seed / reseed 快照（下沉 TODO-DATA-SOURCE）。
+#      绝不在脚本里 INSERT 自己的数据再查回来证明自己对——junction 表缺失、
+#      resolver 漏关联这类真 bug 在自证闭环里永远测不出（三轮假绿的根因）。
+#   3. 退出码 0 = 过，非 0 = 失败：脚本本身即结果，无需解析 stdout。
+#      每条断言失败立即 fail() 带诊断，绝不吞错、绝不 || true 掩盖。
+#   4. 会被累积进回归包：merge = 本脚本入 regression/<域>/，波末在 reseed
+#      确定性快照上全量重放。因此断言值必须写死（活数据上的断言必然腐烂），
+#      含时间推进 case 时用伪造的 T-1 基准（见断言三示例后的 TODO-TIME）。
+#   5. 断言弱化受审计：删对账 SQL / 放宽阈值 / 降级成 code==200 会被 wave
+#      audit 中人工核对 diff；本版不声称自动语义审计。库存/资金类平衡断言标 protected（见下 §断言 A），
+#      改动必须走人决策，别在这个脚本里悄悄放水。
+#
+# 三类断言示例（对齐 accept-assertion-forms.md 的强制形态）：
+#   §断言 A  DATA  跨表对账 SQL（库存三表平衡类，protected）
+#   §断言 B  API   返回行内容断言（非仅 code==200）
+#   §断言 C  DDL   建表公共字段全集断言
+#
+# 环境入参（standalone 与 编排层 headless 都从 env 读，脚本不自己发现连接）：
+#   DB_DSN / DB_HOST DB_PORT DB_USER DB_PASS DB_NAME   查询用的数据库连接
+#   API_BASE                                            被测后端根 URL（含 /轨端口）
+#   API_TOKEN                                           鉴权 token（免登端点可空）
+#   —— TODO-ENV: 按栈补齐（迁移工具连接串 / 前端 build hash 校验入口等）
+# =============================================================================
+
+set -euo pipefail
+
+# --- 通用工具（栈无关，可直接用） -----------------------------------------
+TICKET="<TICKET-ID>"   # TODO: 填 ticket id，与 regression/<域>/<TICKET-ID>.verify.sh 对齐
+fail() { echo "FAIL [$TICKET] $*" >&2; exit 1; }
+pass() { echo "PASS [$TICKET] $*"; }
+
+
+# db(): 跑一条 SQL，回一个标量（去表头、去空白）。
+#   TODO-DB: 换成本项目的 DB client。裸值输出、失败非 0。示例形态：
+#     mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" -N -B -e "$1"
+#     psql "$DB_DSN" -Atc "$1"
+db() { fail "TODO-DB: 未实例化 db() —— 填本项目 DB client"; }
+
+# api(): GET 一个端点，回响应体（JSON）。只读，绝不 POST/PUT。
+#   TODO-API: 换成本项目的 HTTP 调用 + 鉴权头。示例形态：
+#     curl -fsS -H "Authorization: Bearer $API_TOKEN" "$API_BASE$1"
+api() { fail "TODO-API: 未实例化 api() —— 填本项目 HTTP client + 鉴权头"; }
+
+# json(): 从 JSON 取一个字段。TODO-JSON: 有 jq 用 jq；无则标注依赖。
+#   用法 json "$body" '.rows[0].total'
+json() { fail "TODO-JSON: 未实例化 json() —— 填 jq 或等价提取器（标注依赖）"; }
+
+# --- 栈函数库（2026-08-17，放在存根之后让它**覆盖**存根）--------------------
+# 项目选了栈（requirements meta.stack）就 source 栈包，db()/api()/json()/login()
+# 现成，不用逐项目重写上面的 TODO 存根。项目 verify-env.sh 里定：
+#   export STACK_LIB=~/.claude/stacks/<stack-id>
+if [ -n "${STACK_LIB:-}" ] && [ -f "${STACK_LIB}/verify-lib.sh" ]; then
+  # shellcheck source=/dev/null
+  . "${STACK_LIB}/verify-lib.sh"
+fi
+
+echo "=== L1 verify: $TICKET ==="
+
+# =============================================================================
+# §断言 0 —— 反 stale（必跑前置守卫，不是可选注释）  堵 E 类：测旧 build/旧 jar
+# -----------------------------------------------------------------------------
+# 回归包在 reseed 快照上重放；若被测后端加载的是旧 jar（run 常加载包仓库 jar 非
+# target/classes）或前端是旧 build，下面所有 §A/§B/§C 断言都在旧产物上跑——假绿假红
+# 直接进回归包，且 L1 是硬门。所以任何数据断言之前，先校验产物新鲜度，对不上即 fail。
+#
+# TODO-STALE: 按栈实例化新鲜度校验（这是 §0，必须启用，别当可选）：
+#   后端：查部署 jar mtime / 接口 /actuator 暴露的 git commit  vs  EXPECT_REV
+#   前端：查 build hash / 资源指纹                              vs  EXPECT_REV
+# ★ 2026-08-17 条件反转：EXPECT_REV 未注入 = **fail 不是 warn**。
+#   审计实证：旧写法（未注入仅 WARN）下 EXPECT_REV 在整个 zhixing 里零注入点，
+#   这道"必跑前置守卫"设计上默认关且永远不会被打开——旧产物上的全绿被当真绿。
+#   注入点 = QA subagent 跑回归包前（qa-subagent-prompt.md 的产物核对）：
+#     后端 EXPECT_REV=$(git -C <repo> rev-parse --short HEAD)（与 /actuator/info 对）
+#     前端 EXPECT_REV=$(cat .next/BUILD_ID)（或资源指纹）
+#   确实无部署产物可对的纯静态项目：显式 EXPECT_REV=none 声明豁免（留痕，不是沉默）。
+EXPECT_REV="${EXPECT_REV:?反 stale 未注入：跑回归包前 export EXPECT_REV=<产物指纹>（纯静态项目显式 =none 豁免）}"
+ACTUAL_REV=""   # TODO-STALE: 换成真实取指纹命令，如 $(curl -fsS "$API_BASE/actuator/info" | json .git.commit)
+if [ "$EXPECT_REV" != "none" ]; then
+  [ -n "$ACTUAL_REV" ] || fail "反 stale 未实例化：EXPECT_REV 已注入但取不到实际指纹——先填 TODO-STALE，别在无守卫的情况下跑回归包"
+  [ "$ACTUAL_REV" = "$EXPECT_REV" ] || fail "产物 stale：期望 $EXPECT_REV 实得 $ACTUAL_REV——旧 build/jar 上断言无意义，先重部署再验"
+  pass "反 stale：产物版本匹配 $EXPECT_REV"
+else
+  echo "WARN [$TICKET] §断言0 豁免：EXPECT_REV=none（纯静态项目声明无部署产物可对）" >&2
+fi
+
+# =============================================================================
+# §断言 A —— DATA / 跨表对账 SQL（库存三表平衡类）  [protected]
+# -----------------------------------------------------------------------------
+# 形态铁律（accept-assertion-forms.md DATA 行）：不是自造数据查回来自证，而是
+# 在真实 seed 数据上做跨表对账——账实两表算出来的值必须相等/守恒。这是 B 类
+# （跨层契约/数据一致性）盲区的唯一解药，protected，改动走人决策。
+#
+# 通用形态：账动表累计  ==  实存表当前值  （差值必须为 0）
+#   流水累加(location_stock + stock_flow) == 库存快照(product_inhouse)
+#   聚合键粒度 == 展示行粒度（避免 roll-up 串粒度）
+#   BigDecimal/小数端到端数值断言（禁字符串 + 拼接的假值）
+#   雪花 id 比较必 CAST 为整型再比（字符串隐式转 DOUBLE 会串行）
+#
+# TODO-A: 替换成本 ticket 涉及的对账口径。挑一个「实现方没写过的 seed 对象」
+#         （如某个已有库位/已有产品），账实分别算、断差值为 0。写死期望 0。
+DIFF_A=$(db "
+  /* 跨表对账：账动累计 vs 实存快照，差值应为 0 */
+  SELECT ABS(
+    (SELECT COALESCE(SUM(<账动列>), 0) FROM <账动表> WHERE <限定真实 seed 对象>)
+    -
+    (SELECT COALESCE(<实存列>, 0) FROM <实存表>   WHERE <同一 seed 对象>)
+  )
+")
+[ "$DIFF_A" = "0" ] || fail "跨表对账不平：账动 vs 实存 差值=$DIFF_A（期望 0）——库位/产品未守恒"
+pass "跨表对账平衡（差值 0）"
+
+# =============================================================================
+# §断言 B —— API / 返回行内容断言（非仅 code==200）
+# -----------------------------------------------------------------------------
+# 形态铁律（accept-assertion-forms.md API 行）：只断 code==200 会被「接口漏字段 /
+# 返回空行 / 值算错」骗绿。必须断返回行的内容——关键字段齐全 + 关键值正确。
+#
+# TODO-B: 换成本 ticket 的查询端点，取一个真实 seed 对象验其返回。
+BODY_B=$(api "/<域>/<资源>/list?<按真实 seed 对象过滤>")
+
+# B-1 断有数据（空行也能 code==200，必须断出来）
+CNT_B=$(json "$BODY_B" '<.rows | length 或等价计数>')
+[ "${CNT_B:-0}" -gt 0 ] || fail "API 返回 0 行——查询/权限/租户拦截器把真实 seed 数据滤没了"
+
+# B-2 断关键字段非空（漏字段：contract 破坏，最常见的静默失败）
+V_KEY=$(json "$BODY_B" '<.rows[0].关键字段>')
+[ -n "$V_KEY" ] && [ "$V_KEY" != "null" ] || fail "API 返回行缺关键字段 <关键字段>——VO 漏映射/@AutoMapper 未加"
+
+# B-3 断关键值正确（写死期望值，值来自 reseed 快照的确定性数据）
+V_EXPECT="<seed 快照里该对象的确定值>"
+V_ACTUAL=$(json "$BODY_B" '<.rows[0].被验值>')
+[ "$V_ACTUAL" = "$V_EXPECT" ] || fail "API 返回值错：得到 '$V_ACTUAL' 期望 '$V_EXPECT'——口径/精度/序列化偏差"
+pass "API 返回行内容正确（有数据 + 字段齐 + 值对）"
+
+# =============================================================================
+# §断言 C —— DDL / 建表公共字段全集断言
+# -----------------------------------------------------------------------------
+# 形态铁律（accept-assertion-forms.md DDL 行）：只断表存在会被「建了表但漏公共
+# 字段」骗绿——漏 create_dept 这类 INSERT 时才炸（Unknown column）。必须断 6 个
+# 公共字段全集都在。
+#
+# TODO-C: 换成本项目的公共字段集与表名。RuoYi 系为例见资源包 stacks/ruoyi-vue-plus/。
+TABLE_C="<本 ticket 新建表名>"
+COMMON_COLS=(<公共字段 1> <公共字段 2> <公共字段 3> <公共字段 4> <公共字段 5> <公共字段 6>)
+for col in "${COMMON_COLS[@]}"; do
+  HAS=$(db "
+    SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema = '$DB_NAME'
+      AND table_name   = '$TABLE_C'
+      AND column_name  = '$col'
+  ")
+  [ "$HAS" = "1" ] || fail "表 $TABLE_C 缺公共字段 '$col'——INSERT 会报 Unknown column，BaseEntity 自动 fill 会挂"
+done
+pass "建表公共字段全集齐（${#COMMON_COLS[@]} 个）"
+
+# =============================================================================
+# TODO-TIME（可选）：时间推进 case
+#   数据积累后才暴露的涌现缺陷（月度聚合 / 历史回填 / job 只跑 T-1）单 ticket
+#   时间窗看不到。若本 ticket 命中跑批/聚合，加一段：以 reseed 快照里伪造的
+#   T-1 基准数据断聚合结果（写死期望），拦「统计表 UPSERT 残留 / job 时序」类。
+# =============================================================================
+
+echo "=== L1 verify OK: $TICKET ==="
+exit 0

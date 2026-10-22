@@ -1,0 +1,44 @@
+# 任务计划 phase-plan.yaml —— 机器可读权威（①xuqiu 第 5 步产出，②zhixing init/sync/C8 消费）
+#
+# ⚠️ 2026-08-17 起取代 phase-plan.md：旧 md 是「人看的表格 + 零机器消费方」，三条洞
+#    全指向它——返工任务名（D9X/D-FIX-N）排序退化、C8 对排不了序的任务静默跳过、
+#    QA 范围不进 qa_gate payload（两轮 QA 各自即兴划范围，「连红 2 轮」信号不可比）。
+#    人看的总览可以另写 md，但**调度顺序与 QA 范围以本文件为准**。
+#
+# 分工（避免两处真相）：
+#   ticket → 任务 的归属：ticket front-matter 的 `phase` 字段（C7 必填），不在这里重复。
+#   本文件只登记任务本身：顺序（order 显式定序）/ 目标 / 前置 / QA 范围 / 演练剧本。
+#
+# 硬规则（task_state init/sync 与 dag_lint C8 都会校验）：
+#   - 磁盘上出现的每个 phase 都必须在这里登记（含返工任务 D9X），否则拒收；
+#   - depends_on_phases 指向的任务 order 必须更小；
+#   - qa_scope 键固定 L0/L1/L2/L3（与 SKILL §3 验证门一一对应），qa_gate 时原样进
+#     payload——每轮 QA 拿到同一份、可 diff、可审计的范围。
+
+phases:
+  - id: D1
+    order: 10              # 显式定序。间隔留 10，返工任务好插队（D1 返工 → D1X, order: 15）
+    goal: "<一句话：这个任务交付什么可独立验收的完整链路>"
+    depends_on_phases: []
+    qa_scope:
+      L0: ["编译 + 单测 / 前端 build（真门是 build 不是类型检查）"]
+      L1: ["<真实 seed 上的跨表对账断言，禁自造数据自证——写具体到表和口径>"]
+      L2: ["<端侧截图/真机断言，反 stale 先验产物版本——写具体到页面和对照物>"]
+      L3: ["<独立邪路：跨日期边界/非超管权限/空数据/同日区间/并发，每类至少 1 条>"]
+
+  - id: D2
+    order: 20
+    goal: "<…>"
+    depends_on_phases: [D1]
+    qa_scope:
+      L0: ["<…>"]
+      L1: ["<…>"]
+      L2: ["<…>"]
+      L3: ["<…>"]
+
+# 交付前最终验收演练：全链路业务剧本（all_done 时同屏带出，派干净 QA subagent 跑）。
+# 写不出剧本 = 任务计划没想清楚——和「写不出 QA 范围 = 任务切得不对」同构。
+final_rehearsal:
+  scenarios:
+    - "<剧本 1：从 <业务起点> 到 <业务终点> 的完整链路，含中途状态与对账点>"
+    - "<剧本 2：…>"

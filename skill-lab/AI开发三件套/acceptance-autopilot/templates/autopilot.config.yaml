@@ -1,0 +1,101 @@
+# acceptance-autopilot 项目配置模板
+# ============================================================================
+# 用法：复制到 <项目>/doc/test/_autopilot/autopilot.config.json（或 .yaml），逐项填实。
+#      机制部分不要抄——本文件只装"这个项目和别的项目不一样的地方"。
+#      填不出来的项留 TODO，别猜（猜错会让闸门静默失效）。
+#
+# 参考实现（已跑 700+ 条真实问题）：
+#   <你的项目>/.claude/skills/acceptance-autopilot/
+#   <你的项目>/doc/test/_autopilot/{channel.config.json,lib/gate.py,lib/ledger.py}
+# ============================================================================
+
+project: <项目 slug>
+created: <YYYY-MM-DD>
+
+# ── 1. 问题从哪来（表的唯一真相源）────────────────────────────────────────
+source:
+  channel: feishu | kdocs | github | other   # 决定用哪个 client
+  default_url: "<问题表 URL>"
+  # 表身份双写：config 与 client 里的 DEFAULT_URL 必须一致，否则换表时只改一半
+  mirror_in_code: "lib/<channel>_client.py 的 DEFAULT_URL / DEFAULT_FID / DEFAULT_SHEETS"
+  sheets:
+    - name: <sheet 名>
+      alias: [<人可能念的别名>]
+      desc: <这张 sheet 装什么>
+  # 列布局（0-based；写回列必须只有一个，且台账里硬编码）
+  columns:
+    id: 0
+    module: 1
+    description: 2
+    image: 3
+    created_date: 5
+    reporter: 6
+    client_column: 7        # ⚠️ 客户列，任何情况不碰
+    ai_write: 8             # ★ AI 唯一可写列
+    client_reply: 9         # 可选：甲方答复列（有则要扫）
+  date_format: "M/D/YYYY"   # 解析用数字元组比较，禁字符串比较
+  min_date: <YYYY-MM-DD>    # 早于此日期的问题不处理（历史遗留）
+
+# ── 2. 验证通道：每个端「什么算验过」──────────────────────────────────────
+# 判据：确定性断言优先，截图其次；能 automation 的绝不推人力
+verify_channels:
+  - id: backend
+    how: api | sql
+    entry: <怎么拿 token / 连库>
+    counts_as: verified_e2e
+  - id: admin
+    how: playwright
+    entry: <复用哪个 skill / 怎么起栈>
+    counts_as: verified_e2e
+  - id: mp
+    how: devtools-automator          # 小程序权威主通道
+    entry: <.mp-auto/run.sh 之类>
+    counts_as: verified_e2e
+    prefer: deterministic-assert     # dump/eval 优先，shot 仅纯视觉
+  - id: h5
+    how: playwright
+    counts_as: triage-only           # ⚠️ 只做初筛，不作 mp 依据
+  - id: device
+    requires: human                  # 仅物理硬件（相机/NFC/GPS）才允许
+    note: "必须写清是哪种硬件，别拿它当逃避自动化"
+
+# ── 3. 台账与闸门路径 ────────────────────────────────────────────────────
+paths:
+  ledger_dir: doc/test/_autopilot
+  ledger_pattern: "_ledger-{sheet}.json"     # 按 sheet 拆文件 → 多会话并行安全
+  shots_dir: doc/test/_autopilot/<date>/test-shots
+  gate: doc/test/_autopilot/lib/gate.py
+  decisions: doc/decisions.yaml              # 现行口径唯一机器权威（验收/维护期）
+  writeback_marker: doc/test/_autopilot/.writeback-approved   # 当日有效
+  tier1_marker: doc/test/_autopilot/.tier1-authorized         # 一次性授权
+
+# ── 4. 写回策略 ──────────────────────────────────────────────────────────
+writeback:
+  note_max_chars: 360            # 建议 200-300
+  forbidden_chars: ["\n", "\r"]  # 血泪：带换行会「当时写进去、事后那格变空」
+  tier1_templates:               # 白名单，禁词表见下
+    accepted: "已受理，处理中(M/D)"
+    clarify: "待口径确认：<问题>（<D-id>）"
+    device: "待真机测试：<测什么>"
+  tier1_forbidden_words: [已处理, 已修复, 已解决, 已完成]
+  tier2_requires:
+    stages: [verified_e2e, verified_device, deployed]
+    audit_verdict: "PASS"
+    audit_auditor: independent
+  reread_via: "<独立回读路径>"   # ⚠️ 别用单点 get_range 回读，实测会读成空
+
+# ── 5. 平台坑位（本项目的假绿清单，供 QA 参考）──────────────────────────
+# 从 stack 的 gotchas 里摘，别每次重新踩
+platform_gotchas:
+  - <如：H5 上 wx.* / 分包 barrel / scoped-slot 掉值不复现，必须真机>
+  - <如：日期选择器 tz 偏移默认前一天>
+  - <如：改完必须 kill 掉本轮起的后台进程，但别误杀 负责人 的 watch build>
+
+# ── 6. 升级规则 ──────────────────────────────────────────────────────────
+escalation:
+  cluster_threshold: 8     # 同主题 ≥N 条仍 clarify → 停止逐条修，升级需求级走 ①xuqiu mini
+  # 高风险三类：即使有 clarify+fallback 也不准按 fallback 做，必须拿到明确拍板
+  high_risk_requires_decision:
+    - 改状态机枚举
+    - 改已落库字段语义
+    - 删功能 / 删数据

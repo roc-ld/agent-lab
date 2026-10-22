@@ -1,0 +1,61 @@
+# fastapi-local-web 栈包 profile —— 最小骨架
+# 由 /xuqiu 于 2026-08-18 首次声明该栈时当场生成（SKILL step 0：目录不存在→建骨架，不硬 STOP）。
+# N=1（动科院 AI 文档工作站），尚未蒸馏；随第二个项目落地再补 gotchas 与 renderer。
+stack: fastapi-local-web
+n_projects: 1
+
+# 形态：单机本地 Web 应用。后端 Python + FastAPI，前端浏览器直连 127.0.0.1，
+# 桌面放快捷方式。无多租户、无账号体系（单机多用户靠目录隔离）。
+runtime:
+  python: ">=3.11,<3.14"
+  server: "uvicorn 单进程；仅监听 127.0.0.1"
+  frontend: "服务端渲染 + 原生 JS，不引前端构建链（国内网络下 npm 构建是净负担）"
+  packaging: "绿色版 Python + 启动脚本；不做 PyInstaller（杀软误报）"
+
+# 本栈没有 ORM/DDL 层（数据是文件 + JSON），DDL 类 accept 断言不适用。
+# dag_lint 若遇 DDL form 应报错——那说明 ticket 拆错了。
+public_fields: []
+no_ddl: true
+
+storage:
+  kind: "文件系统 + JSON 索引"
+  rules:
+    - "规则库 rules/ 与素材库 assets/ 是全部价值所在，备份只备这两个目录"
+    - "产出按 我的文档/<日期>-<标题>/ 存，旧版本保留不覆盖"
+    - "任何 JSON 索引写入用临时文件 + 原子 replace，不就地改（断电半写会毁索引）"
+
+llm:
+  provider: "DeepSeek chat/completions（response_format=json_object）"
+  rules:
+    - "★ 长输出不稳定：三次独立实测均遇 IncompleteRead。每个调用必须重试 ≥3 次"
+    - "★ 批量任务必须分批（图片打标 10 张一批仍会挂，用 5-8 张）"
+    - "★ 每个调用必须有非模型兜底（如打标失败改用原始页面文字），不许静默留空"
+    - "模型只吐 JSON，不碰文件；校验与执行一律由程序做"
+
+windows:
+  rules:
+    - "所有 subprocess 加 encoding='utf-8', errors='replace'（GBK 环境下会炸在解码上）"
+    - "环境变量设 PYTHONUTF8=1；.ps1 开头 chcp 65001"
+    - "外部依赖：soffice(LibreOffice) / pdftoppm(poppler)。poppler 缺失只影响渲染层，要能降级"
+
+accept_forms:
+  # ⚠️ dag_lint 的 VALID_ACCEPT_FORMS 是固定白名单 {DDL,API,MENU,DATA,STATE}，
+  #    不在其中的 form 是 **error**（zhixing/scripts/dag_lint.py:60,618）。
+  #    本栈无数据库、无菜单表，因此只用下面三个，**禁用 DDL 与 MENU**。
+  usable: [API, DATA, STATE]
+  banned:
+    DDL: "本栈无 DDL。且 public_fields 为空会让 C5 回落默认 6 字段集并报 error"
+    MENU: "本栈无菜单表"
+  mapping:
+    API: |
+      FastAPI 端点。必断**响应体关键字段**，不是只断 200。
+      例：POST /generate 返回 job_id 且 status=queued；GET /result/<id> 的 pages[] 长度==请求页数
+    DATA: |
+      跨结构对账（本栈用它替代"跨表对账"）。打在**实现方没造过的样本**上。
+      例：provenance.json 的 filled∪dropped 必须等于该版式锚点全集；
+          manifest.json 每条 by∈{auto-ctx,auto-fallback,human} 且无空描述；
+          产出 pptx 里 PICTURE shape 数 == plan.json images 键数
+    STATE: |
+      状态机。必断**非法转移被拒** + 关键路径全链可达。
+      例：QA 未过的产出不允许进入 delivered；待确认样板未 confirmed 不参与分组计数；
+          source=remote 请求带密级素材必须 400 而不是放行

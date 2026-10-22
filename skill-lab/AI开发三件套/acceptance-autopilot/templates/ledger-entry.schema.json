@@ -1,0 +1,57 @@
+{
+  "$comment": "acceptance-autopilot 台账条目 schema（参考形态，不是 JSON Schema 的严格子集）。落盘前由 ledger.save() 硬校验；校验不过直接抛异常，不许 force 绕（force 仅限人明示特例 + override_reason）。",
+  "sheet": "<sheet 名>",
+  "excel_row": 102,
+  "fingerprint": "<col_module>||<desc 前 20 字>",
+  "$fingerprint_note": "去重主键。行号会漂移（表中间插一行），指纹不会。",
+  "stage": "fixing",
+  "$stage_enum": ["blocked_image", "triaged", "clarify", "wont_do", "not_a_bug", "fixing", "fixed_local", "verified_e2e", "verified_device", "deployed", "confirmed", "regressed"],
+  "$stage_note": "细节文案（如「#3 口径已确认」）放这里，不占 stage。自由文案写不进 stage。",
+  "stage_note": "",
+  "category": "visual|data|logic",
+  "$category_note": "verified_e2e 及以后必填——不填则 visual 假绿闸失效。",
+  "has_image": true,
+  "$has_image_note": "不信执行方自报：复述门用 live pull 覆盖此字段（填 false 想跳过截图绑定无效）。",
+  "desc_snapshot": "<问题表原始描述>",
+
+  "restate": {
+    "$note": "复述卡：看完截图先写这个，过了复述门才准动代码。",
+    "problem": "我理解的问题（≥15 字）",
+    "page": "pages/** 或 /admin/** 或菜单名",
+    "shot_says": "截图里实际看到的、desc 里没有的内容（≥15 字）",
+    "$shot_says_note": "与 desc 的 2-gram 重合度 ≥0.6 会被拒——防复读甲方原话交差。",
+    "shot_file": "<date>/test-shots/<sheet>-row<行号>.png",
+    "$shot_file_note": "相对路径 + 必须带日期目录 + 文件真实存在（死路径写不进）。",
+    "shot_sha1_8": "b8dc4068"
+  },
+
+  "evidence": {
+    "before_shot": "",
+    "after_shot": "",
+    "$after_shot_note": "verified_device / deployed / confirmed 三档必填，且文件必须真实存在。",
+    "channel": "devtools|admin-playwright|h5|api|sql",
+    "$channel_note": "如实验证通道。H5 只作初筛，不作 mp 的验收依据。",
+    "proof": "SQL 行 / 接口返回摘要 / dump 出的真实状态值",
+    "$proof_note": "not_a_bug 与 verified_e2e 的必需项。静态读码断言会被拒。"
+  },
+
+  "audit": {
+    "verdict": "PASS|FAIL|PARTIAL|NEEDS_VISUAL|NEEDS_CLARIFY",
+    "$verdict_note": "只有 PASS 才算真验过。由 clean-QA subagent 回填，不是主任务方写。",
+    "auditor": "independent",
+    "$auditor_note": "必须 independent——主任务方自测填这里无效。",
+    "evidence": "QA 自己独立拿到的证据"
+  },
+
+  "cause": "doc|impl|misread",
+  "$cause_note": "写回前必填：验收判本条为何逃逸 → 回流 ①xuqiu §4 归因。",
+  "decision_refs": ["D-0012"],
+  "$decision_refs_note": "本条依据的现行口径 D-id。cause=doc 且 stage≥fixing 时必填。",
+  "decision_note": "命中的口径为何不适用（可选；与 decision_refs 二选一必有其一）",
+
+  "recurrence": 0,
+  "$recurrence_note": "≥2 = 顽固：强制根因调研 + 全量独立验收 + 多 agent 投票。",
+  "writeback": "none|written|rejected",
+  "legacy": false,
+  "$legacy_note": "只认磁盘上本就 legacy 的（migrate 产物）。新写入自报 legacy:true 不豁免——防单字段自我旁路。"
+}

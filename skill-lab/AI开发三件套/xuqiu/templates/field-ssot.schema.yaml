@@ -1,0 +1,153 @@
+# 字段表 SSOT —— 改字段只改一处的唯一真相源（Single Source Of Truth）
+# ============================================================================
+# 由 ①xuqiu 维护；~/.claude/skills/xuqiu/scripts/ssot_gen.py 单向读它生成三样：
+#   ① 迁移 DDL（<迁移工具> 迁移脚本）
+#   ② entity 骨架（<后端模块> 实体类 / ORM model）
+#   ③ 前端类型（<前端> TS interface / 表单字段元数据）
+# 单向 = SSOT → 代码，永不反向。改字段名/类型/字典/约束 → 只改这个文件 → 重跑
+# 生成器 → 三层同步刷新。消灭「字段名后端/DDL/前端三处对不上」这一整类跨层契约事故。
+#
+# 占位符 <...> 按项目实际技术栈替换（后端模块 / 前端 / 迁移工具 / id分段 / UI组件库）。
+# 真实的字典 key、公共字段全集、类型映射表按项目填写；本文件正文保持 stack-agnostic。
+# ============================================================================
+
+
+# ── 顶层：类型映射 + 公共字段块（全表复用，锚点引用，不重复写）──────────────
+
+# 逻辑类型 → 各层落地类型。<按栈填>：把右侧换成你的栈的真实类型名。
+# 生成器读这张表把 field.type（逻辑名）翻译成 DDL 列类型 / entity 字段类型 / TS 类型。
+type_map:
+  # 逻辑类型      DDL 列类型          entity 类型        TS 类型
+  id:        { ddl: "<主键类型>",   entity: "<Long等>", ts: "string" }   # TODO: id 常需前端 string 防精度丢失
+  str:       { ddl: "VARCHAR",      entity: "<String>", ts: "string" }   # 配 length
+  text:      { ddl: "<长文本类型>", entity: "<String>", ts: "string" }
+  int:       { ddl: "INT",          entity: "<Integer>", ts: "number" }
+  decimal:   { ddl: "DECIMAL",      entity: "<BigDecimal>", ts: "string" } # TODO: 金额/重量用 decimal；前端 string 防浮点，累加前 Number() 强转
+  bool:      { ddl: "<布尔类型>",   entity: "<Boolean>", ts: "boolean" }
+  date:      { ddl: "DATE",         entity: "<LocalDate>", ts: "string" }
+  datetime:  { ddl: "DATETIME",     entity: "<LocalDateTime>", ts: "string" }
+  dict:      { ddl: "VARCHAR",      entity: "<String>", ts: "string" }   # 值是字典 code，配 field.dict 指向字典 key
+
+# 公共字段块 = 每张业务表都带的框架审计/多租户字段，不逐表重复。
+# 表用 `common_fields: [audit, tenant]` 按名引用；生成器把引用展开成真实列。
+# <按栈填>：换成你的框架（ORM 基类 / BaseEntity）实际自动填充的字段全集。
+# ⚠️ 这套字段全集就是 accept 的 DDL form 强制断言对象——建表必断它们全在（templates/accept-assertion-forms.md）。
+common_field_blocks:
+  audit:                       # 审计字段：框架自动 fill，业务代码不手写
+    - { name: create_by,   type: <创建人类型>, nullable: true,  comment: "创建人" }
+    - { name: create_time, type: datetime,     nullable: true,  comment: "创建时间" }
+    - { name: update_by,   type: <更新人类型>, nullable: true,  comment: "更新人" }
+    - { name: update_time, type: datetime,     nullable: true,  comment: "更新时间" }
+    - { name: create_dept, type: <部门类型>,   nullable: true,  comment: "创建部门" }  # TODO: 最易漏，漏建 INSERT 直接报 Unknown column
+    - { name: del_flag,    type: <删除标志类型>, nullable: false, default: "0", comment: "逻辑删除(0存在/2删除)" }
+  tenant:                      # 多租户字段（单租户项目可整块删）
+    - { name: tenant_id,   type: <租户类型>,   nullable: false, default: "<默认租户>", comment: "租户号；INSERT 不显式赋值，走框架 insertFill 自动注入" }
+
+
+# ── 表定义（一表一条，list 展开可放多表；下面给 1 张示例表）────────────────
+
+tables:
+
+  # ========================================================================
+  # 示例表：<域>需求单（占位符全部标注了"按栈填 / 按需求填"）
+  # 真实项目里把 <...> 换成实际值；一张表照此结构复制。
+  # ========================================================================
+  - table: <t_域_demand>                    # 物理表名。<按栈填> 命名规范（前缀/下划线）
+    comment: "需求单主表"                    # 表注释，进 DDL COMMENT + entity 类 Javadoc
+    module: <后端模块>/warehouse            # 归属模块（生成 entity 落哪个包 / 前端落哪个 views 目录）
+    id_range: <9040-9054>                   # id分段占用（菜单/迁移号段），<按栈填>；仅登记，生成器不消费
+    migration: <V时间戳__域-DEMAND-001-create.sql>  # 生成的迁移文件名，<迁移工具> 命名规范
+    common_fields: [audit, tenant]          # 引用上面的公共字段块，按名展开；无租户项目写 [audit]
+
+    fields:
+      # 每字段字段位含义：
+      #   name     列名（snake_case）—— entity/ts 生成器自动转 camelCase
+      #   type     逻辑类型，取 type_map 的 key
+      #   length   str/decimal 需要；decimal 用 "10,2" 形式
+      #   dict     值来自字典时填字典 key（type=dict 必填）；否则省略
+      #   nullable true/false
+      #   unique   参与唯一约束时填约束组名（同名 = 联合唯一）；否则省略
+      #            ⚠️ 多租户项目：唯一约束必须含 tenant_id，生成器自动把它拼进约束
+      #   comment  中文列注释 → DDL COMMENT + entity Javadoc（注：中文名只进注释，不进渲染；要显示另建 VO 字段）
+      #   gen      逐层生成开关，缺省 = 三层全生成；只想跳某层时显式关
+      #            { ddl: true, entity: true, ts: true }
+
+      - name: id
+        type: id
+        nullable: false
+        comment: "主键"
+        # id 通常是主键，生成器识别 type=id 自动加 PRIMARY KEY
+
+      - name: demand_no
+        type: str
+        length: 32
+        nullable: false
+        unique: uk_demand_no        # 单列唯一（多租户下自动变 uk(tenant_id, demand_no)）
+        comment: "需求单号（编码规则生成）"
+
+      - name: demand_type
+        type: dict
+        length: 20
+        dict: <biz_demand_type>     # 指向字典 key，<按需求填>；值域举例 store/online/wholesale/gift
+        nullable: false
+        comment: "需求业态类型"
+
+      - name: store_id
+        type: id
+        nullable: true
+        comment: "关联门店 id（FK 逻辑关联，不建物理外键）"
+        # TODO: 关联字段是否建物理 FK 按栈约定；多数框架逻辑关联不建物理外键
+
+      - name: demand_weight
+        type: decimal
+        length: "10,3"              # 重量/金额务必 decimal；前端 string 防浮点（type_map 已定）
+        nullable: false
+        comment: "需求重量(kg)"
+
+      - name: demand_date
+        type: date
+        nullable: false
+        comment: "需求日期"
+
+      - name: status
+        type: dict
+        length: 20
+        dict: <biz_demand_status>   # 状态机字段：值域 = 状态机全部状态；accept 用 STATE form 断非法转移被拒
+        nullable: false
+        default: "draft"
+        comment: "单据状态（状态机驱动）"
+
+      - name: remark
+        type: text
+        nullable: true
+        comment: "备注"
+        gen: { ddl: true, entity: true, ts: false }   # 举例：仅后端存、前端表单不出该字段 → 关 ts
+
+    # 表级约束/索引（唯一约束由 field.unique 自动汇总；这里补普通索引 / 复合索引）
+    indexes:
+      - { name: idx_store_date, cols: [store_id, demand_date] }   # <按查询填>：高频查询列建索引
+
+    # 生成器落地路径提示（<按栈填>：模板把 module + table 拼成实际路径）
+    outputs:
+      ddl:    "<迁移工具迁移目录>/<migration>"
+      entity: "<后端模块>/.../domain/<PascalCase(table)>.java 或等价"
+      ts:     "<前端>/api/<module>/types.ts 的 <PascalCase(table)> interface"
+
+
+# ── 生成器契约（ssot_gen.py 读到这里为止；下面是给人看的填写守则）──────────
+#
+# 校验规则（生成器 lint，不过则 STOP，不生成半成品）：
+#   1. 每个 field.type 必须命中 type_map 的 key
+#   2. type=dict 的字段必须有 dict（指向字典 key）；dict key 是否真存在由 ③验收/字典 seed 保证
+#   3. type=str/decimal 必须有 length
+#   4. unique 组名相同的字段拼成联合唯一；多租户项目自动前置 tenant_id
+#   5. common_fields 引用的块名必须在 common_field_blocks 里存在
+#   6. 表名/列名重复 → 报错（SSOT 不允许歧义）
+#
+# 改字段流程（唯一入口）：
+#   改这里 → 重跑 ~/.claude/skills/xuqiu/scripts/ssot_gen.py → 三层 diff → 迁移新增一支（不改已应用的旧迁移）
+#   → ticket 的 blueprint_refs 指向本文件对应表/字段行，蓝图变更时反查受影响 ticket 集
+#
+# 反模式（别做）：
+#   - 直接改生成出来的 DDL/entity/TS —— 下次重跑被覆盖，且三层又对不上（回到事故原点）
+#   - 在 SSOT 里写"曾经是 X 改成 Y" —— SSOT 只描述当前最终值，变更历史进 git + change-log

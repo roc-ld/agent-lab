@@ -1,0 +1,127 @@
+# 需求点清单（REQ 清单）—— 「确认每一个需求点」的机器可查落点
+# ============================================================================
+# 由 ①xuqiu 在拆 ticket **之前**产出，落 doc/requirements.yaml。
+# 作用：把甲方文档里的每一条需求变成一个有 id 的实体，让「有没有漏拆」从
+# 「靠人扫一遍」变成 ~/.claude/skills/xuqiu/scripts/coverage_lint.py 一条命令。
+#
+# 为什么必须有这一层（一期教训）：
+#   蓝图三件套锚的是「实现结构」（字段表 / UI 索引 / 原型目录），不是「甲方说了什么」。
+#   ticket.blueprint_refs 能回答「蓝图改了影响哪些 ticket」，回答不了
+#   「甲方需求文档第 37 行『周期购/订阅制』到底拆没拆」。REQ 清单补的就是这一问。
+#
+# 生成方式：
+#   结构化源（xlsx/csv）→ ~/.claude/skills/xuqiu/scripts/req_extract.py 自动抽骨架 → 人工补 domain/priority
+#   非结构化源（word/pdf/聊天记录）→ AI 逐条读、手写进本文件，一条需求一个 id
+#
+# 铁律：
+#   1. **一条需求一个 id，绝不合并**。甲方写成一行的就是一条，别因为「这两条像」就并成一条——
+#      合并后覆盖率永远是 100%，这层校验就废了。
+#   2. **id 终身不变**。需求改了改 text 不改 id；需求删了标 status=dropped 不删行
+#      （删了行，历史 ticket 的 req_refs 就成悬空引用）。
+#   3. **source 必须能回溯到原文**（文件名 + 行号/页码/单元格），甲方质疑时要能当场翻出来。
+#   4. `tickets` 字段**不手填**——由 coverage_lint.py 从各 ticket 的 req_refs 反向算出来。
+#      手填会和 ticket 那边不一致，制造第二个真相源。
+# ============================================================================
+
+meta:
+  project: <项目名>
+  # ★ 模式开关（2026-08-17，一套三件套两种 profile 的分叉点，详见 SKILL「solo 模式」节）：
+  #   client = 外包（甲方在环：确认单按板块阻塞、needs_human.route 可 client、change-log 供报价举证）
+  #   solo   = 独立开发（负责人 就是甲方：入口是 product-brief.yaml、route 只许 owner、
+  #            确认单降级为全项目自审单不阻塞拆 ticket、AI 可按拍板边界默认续拆）
+  mode: client | solo
+  # ★ 仪式重量（solo 常用 micro）：full = 全量流程；micro（预估 ticket ≤10 或 ≤3 天）=
+  #   authority 允许单文件 authority.yaml / 单 phase / 设计段只跑内容块回流。
+  #   保留全强度的：REQ 清单、accept 断言、四项 lint、snapshot 基线——重量旋钮不动骨架。
+  scale: full | micro
+  # ★ 选栈（2026-08-17）：栈包在 ~/.claude/stacks/<id>/（profile.yaml 常量 +
+  #   gotchas.md 坑手册 + verify-lib.sh + renderer）。已有：ruoyi-vue-plus。
+  #   新栈（N=1）填 none 走死文档 + 显式 lint-profile；声明了具体栈但目录不存在 →
+  #   xuqiu 当场生成最小骨架（不硬 STOP），并在确认单/自审单标注一行。
+  #   dag_lint 据此解析 public_fields（lint-profile.yaml 写 `stack: <id>` 即可）。
+  stack: ruoyi-vue-plus | none | <新栈id>
+  # 需求基线：这份清单是从哪些文件抽出来的。基线换版本必须在这里改，
+  # 并跑一次 coverage_lint 看哪些 REQ 的 text 变了 → 那批 ticket 要重审。
+  baseline:
+    - file: <需求文档路径；solo 项目 = docs/research/<slug>/product-brief.yaml>
+      version: <导出日期或版本号>
+      note: <这份文件覆盖哪部分需求>
+  # 域划分：REQ id 的中段取值域，与 ticket.track 对齐（同一套域名字，别两套）
+  domains: [<DOMAIN-A>, <DOMAIN-B>, ...]
+
+
+requirements:
+
+  # ── 单条需求的完整字段说明（照此复制）───────────────────────────────────
+  - id: REQ-<DOMAIN>-<3位序号>     # 全局唯一、终身不变。域段与 ticket.track 同名。
+    source: <文件名>#<定位>         # 可回溯到原文：sheet名!行号 / 章节号 / 页码
+    module: <功能板块>              # 甲方文档里的分组（如「库存管理」「收银与支付」）
+    text: >                         # 原文照抄，别改写、别提炼——提炼会丢掉甲方的真实措辞，
+      <甲方原话>                    #   而歧义往往就藏在措辞里。要解读写进 note。
+    domain: <DOMAIN>                # 归属域（= ticket.track）
+    priority: P0 | P1 | P2          # P0=不做则项目不成立；P1=首版应有；P2=可迭代
+    status: pending                 # pending → covered → 见下方状态机
+    # ↓ 可选字段
+    note: <AI 的解读 / 与其他 REQ 的关系 / 实现要点>
+    clarify: <需要甲方澄清什么>      # status=clarify 时必填，进确认单的提问区
+    depends_req: [REQ-XXX-001]      # 需求层面的依赖（不是 ticket 依赖），用于排任务顺序
+    tickets: []                     # ★ 不手填，coverage_lint.py 反向回写
+    # ↓ 决策终局四字段（拍板留痕；**写这四个字段的权力永远只属于 负责人/甲方**，
+    #   AI 的默认口径只进 note，不署名——coverage_lint 有绊线：clarify 与 decided_by
+    #   并存报 error。decided_text_sha 的「已拍板口径被改动」闸在批 3 落地）
+    decided_by: <owner | 甲方名>
+    decided_at: <YYYY-MM-DD>
+    decided_cr: <CR-YYYYMMDD-NN>    # 哪次变更记录拍的板（change-log 行号/编号）
+    decided_text_sha: <拍板时 text 的 sha 前 8 位>  # text 再被改动即告警「未走 CR」
+
+  # ── 真实样例（二期门店系统，抽自 二期项目需求梳理.xlsx）─────────────────
+  - id: REQ-STORE-011
+    source: 二期项目需求梳理.xlsx#门店系统!A11
+    module: 库存管理
+    text: >
+      按份库存核算：入库、出库、盘点全部以"份"为单位，不再使用公斤核算
+    domain: STORE
+    priority: P0
+    status: clarify
+    note: 与一期 kg 口径冲突，涉及 kg→份 转换规则；称重商品（生鲜按重量卖）不在"份"模型内
+    clarify: 称重类商品如何建模？包装件 SKU 与称重 SKU 是否两套？转换差异算谁的？
+    tickets: []
+
+  - id: REQ-STORE-037
+    source: 二期项目需求梳理.xlsx#门店系统!A37
+    module: 会员体系
+    text: >
+      周期购/订阅制：有机蔬菜每周配送订阅，客户一次付月费，系统每周自动生成订单
+    domain: STORE
+    priority: P1
+    status: pending
+    note: 自动生成订单需定时任务；订阅归属（总部 or 门店）未定，影响结算
+    depends_req: [REQ-STORE-034]
+    tickets: []
+
+
+# ── 状态机（coverage_lint.py 按此判定）──────────────────────────────────────
+#
+#   pending  ── 已录入，尚未被任何 ticket 覆盖
+#      │        coverage_lint 报「未覆盖」= 漏拆嫌疑，必须处理
+#      ├─→ covered   已有 ≥1 个 ticket 的 req_refs 指向它（lint 自动认定，不手改）
+#      ├─→ clarify   有歧义，等甲方/负责人 澄清 —— 进确认单提问区，**不算漏拆**
+#      ├─→ deferred  确认过但本期不做（写明 defer_to），**不算漏拆**
+#      └─→ dropped   甲方撤销 —— 保留行不删，避免历史 req_refs 悬空
+#
+#   lint 判定口径：
+#     未覆盖 = status ∈ {pending} 且 tickets 为空          → ❌ error（漏拆）
+#     待澄清 = status = clarify                            → 🟡 warning（进确认单）
+#     本期不做 = status ∈ {deferred, dropped}              → ✅ 不计入分母
+#     无源 ticket = ticket 的 req_refs 为空或指向不存在 REQ → ❌ error（镀金/写错）
+#
+# ── 与其他工件的关系 ────────────────────────────────────────────────────────
+#
+#   REQ 清单  ──req_refs──→  ticket  ──phase──→  任务(daily)  ──→  项目
+#      │
+#      └─→ 确认单：按 module 分组渲染给甲方过目；clarify 的进提问区
+#
+#   与 blueprint_refs 的分工（别混）：
+#     req_refs        = 这个 ticket 满足甲方的哪几条需求  → 查「有没有漏拆 / 有没有镀金」
+#     blueprint_refs  = 这个 ticket 建在蓝图的哪几段上    → 查「蓝图改了要重做哪些 ticket」
+#   两者都要有，回答的是不同的问题。

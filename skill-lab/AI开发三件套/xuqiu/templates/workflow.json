@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "release": "2026-09-22",
+  "project_root": "..",
+  "source_paths": ["code"],
+  "harness_paths": ["doc/verify"],
+  "ignore": [],
+  "runtime": {"capacity": 1},
+  "integration_after": [],
+  "preflight": {
+    "tools": [],
+    "integration": []
+  }
+}

@@ -1,0 +1,110 @@
+# 权威蓝图的结构化承载 —— 「给 AI 查、能 diff、锚点不漂移」的落点
+# ============================================================================
+# 由 ①xuqiu 维护，落 doc/authority/*.yaml。②zhixing 的 impl/QA subagent 和
+# ③验收层都按**锚 id** 精确取用，不再全文读散文。
+#
+# 解决的三件事（都是散文承载做不到的）：
+#   1. **精确 query**：impl subagent 拿 `blueprint_refs: FIELD:t_store_order.status`
+#      能直接取出那一条，不用把整份字段表读进上下文（106 需求点 × 两系统时是刚需）。
+#   2. **细粒度 diff**：每条记录单独 hash。改 1 个字段只让锚了那个字段的 ticket 失效，
+#      不会因为"§5.2 变了"就把锚了整节的 20 个 ticket 全部误 stale。
+#   3. **锚点不漂移**：id 是稳定标识符，不是章节号。散文里插一节会让所有 `#§5.2`
+#      静默指向别的内容——**还能解析，只是指错**，这种错最难发现。
+#
+# 人看的 markdown 由 `authority_lint.py render` 从本文件**单向生成**，不反向回写。
+# 改权威只改 YAML；直接改渲染出来的 md，下次 render 就被覆盖。
+# ============================================================================
+
+# 本文件承载哪一类权威。一类一个文件：
+#   flow      业务流权威图     → doc/authority/flows.yaml
+#   ui        UI 权威索引      → doc/authority/ui-index.yaml
+#   ownership 领域主权表       → doc/authority/ownership.yaml（多系统项目才有）
+#   field     字段表 SSOT      → doc/authority/field-ssot.yaml（另有专属 schema，见 field-ssot.schema.yaml）
+kind: flow
+
+# 锚 id 前缀约定（全项目统一，blueprint_refs 按此写）：
+#   REQ:<req-id>              需求点        （在 requirements.yaml，不在本文件）
+#   FIELD:<table>.<column>    字段
+#   FLOW:<flow-id>            业务流
+#   FLOW:<flow-id>.<step-id>  业务流的某一步 ← 粒度到步，改一步只失效锚了这一步的 ticket
+#   UI:<page-id>              页面
+#   UI:<page-id>.<block>      页面的某一区块
+#   OWN:<entity>              某个数据实体的主权归属
+
+records:
+
+  # ── 每条记录的通用字段（所有 kind 共用）─────────────────────────────────
+  - id: FLOW:F-WMS-03                # ★ 稳定锚 id，**终身不变**。
+    #                                #   改内容改 body，改名改 title，**绝不改 id**——
+    #                                #   id 一变，所有锚它的 ticket 全部变成悬空引用。
+    title: 门店订货到发货             # 一句话，渲染成 markdown 标题
+    status: active                    # active | superseded | dropped
+    #                                #   superseded/dropped 的**保留不删**：删了历史 ticket 的
+    #                                #   blueprint_refs 就悬空了。superseded 要填 superseded_by。
+    owner_system: store               # 多系统项目：这条权威归哪个系统（对齐 ticket.system）
+    body: |                           # 权威内容本体。可以是散文，**但必须自足**——
+      门店在系统里向总部下订货单 →     # impl subagent 只会拿到这一条，不会读上下文。
+      总部汇总排产 → 仓库出库生成配送单 →
+      门店核对份数签收 → 系统自动入库。
+    #  ↓ 可选：类型专属字段。写了就能被更精确地 query 和校验
+    steps:                            # kind=flow 专属：拆到步，锚点粒度到 FLOW:xxx.step-N
+      - id: FLOW:F-WMS-03.step4
+        actor: 门店店员
+        action: 核对份数并签收
+        writes: [FIELD:t_handoff_batch.status, FIELD:t_handoff_batch.received_qty]
+        produces: 状态 = 已签收；差异不为 0 时另走差异确认流
+      - id: FLOW:F-WMS-03.step5
+        actor: 系统
+        action: 签收后自动入库
+        writes: [FIELD:t_inv_stock.on_hand]
+        produces: 可售库存增加
+    related_reqs: [REQ-STORE-029, REQ-STORE-031]   # 反向指回需求点（可选但强烈建议）
+
+  # ── kind=ui 的例子 ────────────────────────────────────────────────────
+  - id: UI:store.pos.checkout
+    title: POS 收银结算页
+    status: active
+    owner_system: store
+    body: |
+      扫码枪读条码 → 自动带出商品与价格 → 报手机号/扫会员码切会员价 →
+      选支付方式 → 打小票或推电子小票。
+    prototype: 原型/门店系统/收银台/结算.png    # 原型锚点（目录+文件，不是 idx 编号）
+    form_factor: 整页                            # 弹窗 / 抽屉 / 整页
+    related_reqs: [REQ-STORE-022, REQ-STORE-023]
+
+  # ── kind=ownership 的例子（多系统项目必备）──────────────────────────────
+  - id: OWN:t_inv_stock
+    title: 二期可售库存
+    status: active
+    body: |
+      唯一权威账本 = 二期 DB。一期不可见（只见日汇总）。
+    authority_system: store           # ★ 唯一写入方
+    reader_systems: []                # 只读副本方；空 = 对方完全不可见
+    sync: 不同步
+    conflict_rule: —                  # 冲突裁决
+    business_key: store_code + sku     # 跨系统去重的稳定业务键（禁用自增/雪花 id）
+
+  # ── 已被取代的记录：保留，不删 ───────────────────────────────────────────
+  - id: FLOW:F-WMS-02
+    title: （旧）门店订货直发
+    status: superseded
+    superseded_by: FLOW:F-WMS-03
+    body: |
+      已被 FLOW:F-WMS-03 取代。保留本条是为了让历史 ticket 的 blueprint_refs
+      不悬空——`authority_lint check` 会把锚到 superseded 记录的 ticket 报出来，
+      提示它们需要重新锚到新记录。
+
+
+# ── 维护铁律 ────────────────────────────────────────────────────────────────
+#
+# 1. **id 终身不变**。改名改 title、改内容改 body、废弃标 status，**绝不改 id**。
+# 2. **不删记录**。废弃标 `status: dropped`；被取代标 `superseded` + `superseded_by`。
+#    删了 = 历史 ticket 的 blueprint_refs 悬空，反查链断掉。
+# 3. **body 必须自足**：consumer 只会拿到这一条，不会读它的上下文。写"同上"、
+#    "见前节"这种在这里是坏味道。
+# 4. **改完必跑**：
+#      authority_lint.py diff      看变了哪些锚
+#      authority_lint.py impact    看波及哪些 ticket → 喂 task_state 置 stale
+#      authority_lint.py snapshot  确认无误后重新打快照
+#    跳过 impact 直接 snapshot = 把变更悄悄吞掉，已完工 ticket 建在错图上还绿着。
+# 5. 人看的 md 由 `render` 生成，**别手改渲染产物**。

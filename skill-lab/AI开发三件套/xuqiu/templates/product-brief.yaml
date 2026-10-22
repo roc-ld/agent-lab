@@ -1,0 +1,36 @@
+# product-brief.yaml —— 独立开发线进 ①xuqiu 的**唯一合法入口**（接缝文件）
+#
+# 谁产出：indie-dev 的 idea-research（深度调研收尾时，把 7 节散文报告蒸馏成这份结构化附件，
+#         落 docs/research/<slug>/product-brief.yaml）。
+# 谁消费：xuqiu（mode=solo 时替代 _input/ 甲方文档；AI 不许拿散文报告自由发挥当需求源）。
+# 铁则：负责人 把产品候选标「要做」≠ 这份文件存在——**没有它 /xuqiu 拒绝启动**
+#       （走 exception: input_unreadable，与素材读不到同级；跳过从无声变显式失败）。
+
+slug: baoshui-xiangdao            # 产品目录名 = code/<slug>/；build-log 固定推导为
+                                  #   code/<slug>/docs/build-log.md（勿另写路径，两处真相必漂）
+website_slug: tax-guide           # ★ 必填。官网 /products/<website_slug> 的落地页记录 id——
+                                  #   「要做」当天先在官网 admin 录 product 记录（wip）再回填这里。
+                                  #   缺这个字段 = 落地页三件事没做完 = 不许起 /xuqiu（规则 0.5 同级）。
+
+mode: solo                        # 固定 solo（client 项目不走本文件，走 /fangan 确认稿 + _input/）
+scale: micro                      # full | micro。micro 判据：预估 ticket ≤10 或 ≤3 天
+                                  #   （由下面 min_scope 推）。决定 xuqiu 的仪式重量，见 SKILL solo 节。
+
+core_action: "小企业主按引导逐步走完当期报税申报，每步给材料清单与常见填错点"
+target_user: "无专职会计的小企业主（1-20 人），现被代账公司敷衍、想自己搞懂"
+pricing_hypothesis: "免费引流进私域；进阶版收订阅（调研中竞品 X 收 ¥N/年）"
+
+min_scope:                        # 最小可用范围（= 第一版全部内容，逐条变成 REQ）
+  - "分步向导页：当期增值税小规模申报，每步说明 + 材料清单 + 常见填错点"
+  - "内容标注依据（XX 年 XX 号公告）+ 更新日期 + 不构成税务建议声明"
+  - "零后端零存储：不收集任何用户数据（这是卖点，写进页面）"
+
+out_of_scope:                     # ★ 明确不做，≥3 条（来自加工阶段的「明确不做」，规则 4 范围写死）。
+  - "不做一般纳税人申报"          #   xuqiu 会把每条录成 status=deferred 的 REQ（defer_to: V2+），
+  - "不做自动填报/对接税局"        #   coverage_lint 从此盯着：谁的 ticket 引用了它们 → error
+  - "不做账务记录/发票管理"        #   （「做了明确不做的事」——范围膨胀的机器闸）。
+  - "不做 App / 小程序（纯 web）"
+
+evidence:                         # 可选：回链证据（飞书产品候选记录 / 调研报告），供 REQ source 引用
+  candidate_record: "飞书【产品候选】recvs8wLqdnViE"
+  research_report: "docs/research/2026-08-XX-baoshui-xiangdao.md"
